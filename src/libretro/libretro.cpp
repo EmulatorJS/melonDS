@@ -6,6 +6,7 @@
 #include <streams/file_stream.h>
 #include <streams/file_stream_transforms.h>
 #include <file/file_path.h>
+#include <compat/strl.h>
 
 #include "Config.h"
 #include "Platform.h"
@@ -696,7 +697,7 @@ void retro_run(void)
    NDSCart_SRAMManager::Flush();
 }
 
-bool _handle_load_game(unsigned type, const struct retro_game_info *info, size_t num)
+static bool _handle_load_game(unsigned type, const struct retro_game_info *info)
 {
    /*
    * FIXME: Less bad than copying the whole data pointer, but still not great.
@@ -822,7 +823,12 @@ bool _handle_load_game(unsigned type, const struct retro_game_info *info, size_t
       return false;
 
    char game_name[256];
-   fill_pathname_base_noext(game_name, info->path, sizeof(game_name));
+   const char *ptr = path_basename(info->path);
+   if (ptr)
+      strlcpy(game_name, ptr, sizeof(game_name));
+   else
+      strlcpy(game_name, info->path, sizeof(game_name));
+   path_remove_extension(game_name);
 
    save_path = std::string(retro_saves_directory) + std::string(1, PLATFORM_DIR_SEPERATOR) + std::string(game_name) + ".sav";
 
@@ -833,25 +839,28 @@ bool _handle_load_game(unsigned type, const struct retro_game_info *info, size_t
    Frontend::LoadBIOS();
    NDS::LoadROM((u8*)info->data, info->size, save_path.c_str(), Config::DirectBoot);
    
-   if(type == SLOT_1_2_BOOT)
+   if (type == SLOT_1_2_BOOT)
    {
       char gba_game_name[256];
       std::string gba_save_path;
+      const char *ptr = path_basename(info[1].path);
+      if (ptr)
+         strlcpy(gba_game_name, ptr, sizeof(gba_game_name));
+      else
+         strlcpy(gba_game_name, info[1].path, sizeof(gba_game_name));
+      path_remove_extension(gba_game_name);
 
-      fill_pathname_base_noext(gba_game_name, info[1].path, sizeof(gba_game_name));
       gba_save_path = std::string(retro_saves_directory) + std::string(1, PLATFORM_DIR_SEPERATOR) + std::string(gba_game_name) + ".srm";
 
       NDS::LoadGBAROM((u8*)info[1].data, info[1].size, gba_game_name, gba_save_path.c_str());
    }
-
-   (void)info;
 
    return true;
 }
 
 bool retro_load_game(const struct retro_game_info *info)
 {
-   return _handle_load_game(NULL, info, NULL);
+   return _handle_load_game(0, info);
 }
 
 void retro_unload_game(void)
@@ -866,7 +875,7 @@ unsigned retro_get_region(void)
 
 bool retro_load_game_special(unsigned type, const struct retro_game_info *info, size_t num)
 {
-   return _handle_load_game(type, info, num);
+   return _handle_load_game(type, info);
 }
 
 #define MAX_SERIALIZE_TEST_SIZE 16 * 1024 * 1024 // The current savestate is around 7MiB so 16MiB should be enough for now
