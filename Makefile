@@ -171,8 +171,18 @@ else ifneq (,$(findstring qnx,$(platform)))
 	#LIBS +=-lpthread
 else ifeq ($(platform), emscripten)
    TARGET := $(TARGET_NAME)_libretro_emscripten.bc
-   fpic := -fPIC
-   SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T -Wl
+   HAVE_OPENGL = 0
+   HAVE_OPENGLES3 = 0
+   HAVE_THREADS = 0
+   HAVE_WIFI = 0
+   STATIC_LINKING = 1
+
+   CFLAGS += -msimd128 -ftree-vectorize
+   CXXFLAGS += -msimd128 -ftree-vectorize
+
+   CC = emcc
+   CXX = em++
+   AR = emar
 else ifeq ($(platform), vita)
    TARGET := $(TARGET_NAME)_vita.a
    CC = arm-vita-eabi-gcc
@@ -472,9 +482,15 @@ CXXFLAGS += -D_CRT_SECURE_NO_WARNINGS
 endif
 
 ifeq ($(DEBUG), 1)
+   CFLAGS += -O0 -g
    CXXFLAGS += -O0 -g
 else
-   CXXFLAGS += -O3 -fno-tree-vectorize # -DNDEBUG
+   CFLAGS += -O3 # -DNDEBUG
+   CXXFLAGS += -O3 # -DNDEBUG
+   ifneq ($(platform), emscripten)
+      CFLAGS += -fno-tree-vectorize
+      CXXFLAGS += -fno-tree-vectorize
+   endif
 endif
 
 include Makefile.common
