@@ -26,6 +26,8 @@ extern InputState input_state;
 
 bool cursor_enabled(InputState *state);
 
+extern bool libretro_supports_bitmasks;
+
 void update_input(InputState *state);
 
 #endif

@@ -8,7 +8,7 @@ InputState input_state;
 u32 input_mask = 0xFFF;
 static bool has_touched = false;
 
-#define ADD_KEY_TO_MASK(key, i) if (!!input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, key)) input_mask &= ~(1 << i); else input_mask |= (1 << i);
+#define ADD_KEY_TO_MASK(key, i, bits) if (bits & (1 << key)) input_mask &= ~(1 << i); else input_mask |= (1 << i);
 
 bool cursor_enabled(InputState *state)
 {
@@ -17,20 +17,34 @@ bool cursor_enabled(InputState *state)
 
 void update_input(InputState *state)
 {
+   u32 joypad_bits;
+   int i;
+
    input_poll_cb();
 
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_A,      0);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_B,      1);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_SELECT, 2);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_START,  3);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_RIGHT,  4);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_LEFT,   5);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_UP,     6);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_DOWN,   7);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_R,      8);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_L,      9);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_X,      10);
-   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_Y,      11);
+   if (libretro_supports_bitmasks)
+   {
+      joypad_bits = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
+   }
+   else
+   {
+      joypad_bits = 0;
+      for (i = 0; i < (RETRO_DEVICE_ID_JOYPAD_R3 + 1); i++)
+         joypad_bits |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, i) ? (1 << i) : 0;
+   }
+   
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_A,      0,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_B,      1,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_SELECT, 2,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_START,  3,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_RIGHT,  4,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_LEFT,   5,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_UP,     6,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_DOWN,   7,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_R,      8,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_L,      9,  joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_X,      10, joypad_bits);
+   ADD_KEY_TO_MASK(RETRO_DEVICE_ID_JOYPAD_Y,      11, joypad_bits);
 
    NDS::SetKeyMask(input_mask);
 

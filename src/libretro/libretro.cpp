@@ -3,6 +3,7 @@
 #include <vector>
 
 #include <libretro.h>
+#include <libretro_core_options.h>
 #include <streams/file_stream.h>
 #include <streams/file_stream_transforms.h>
 #include <file/file_path.h>
@@ -40,6 +41,7 @@ retro_game_info* cached_info;
 
 GPU::RenderSettings video_settings;
 
+bool libretro_supports_bitmasks = false;
 bool enable_opengl = false;
 bool using_opengl = false;
 bool opengl_linear_filtering = false;
@@ -49,6 +51,15 @@ bool toggle_swap_screen = false;
 bool swap_screen_toggled = false;
 
 const int SLOT_1_2_BOOT = 1;
+
+static bool libretro_supports_option_categories = false;
+#ifdef HAVE_OPENGL
+static bool opengl_options = true;
+#endif
+static bool hybrid_options = true;
+#ifdef JIT_ENABLED
+static bool jit_options = true;
+#endif
 
 enum CurrentRenderer
 {
@@ -82,7 +93,11 @@ void retro_init(void)
    initialize_screnlayout_data(&screen_layout_data);
 }
 
-void retro_deinit(void) {}
+void retro_deinit(void)
+{
+   libretro_supports_bitmasks = false;
+   libretro_supports_option_categories = false;
+}
 
 unsigned retro_api_version(void)
 {
@@ -112,10 +127,103 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->geometry.aspect_ratio = (float)screen_layout_data.buffer_width / (float)screen_layout_data.buffer_height;
 }
 
+static bool update_option_visibility(void)
+{
+   struct retro_core_option_display option_display;
+   struct retro_variable var;
+   bool updated = false;
+
+#ifdef HAVE_OPENGL
+   // Show/hide OpenGL core options
+   bool opengl_options_prev = opengl_options;
+
+   opengl_options = true;
+   var.key = "melonds_opengl_renderer";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "disabled"))
+      opengl_options = false;
+
+   if (opengl_options != opengl_options_prev)
+   {
+      option_display.visible = opengl_options;
+
+      option_display.key = "melonds_opengl_resolution";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      option_display.key = "melonds_opengl_better_polygons";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      option_display.key = "melonds_opengl_filtering";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      updated = true;
+   }
+#endif
+
+   // Show/gide Hybrid screen options
+   bool hybrid_options_prev = hybrid_options;
+
+   hybrid_options = true;
+   var.key = "melonds_screen_layout";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && (strcmp(var.value, "Hybrid Top") && strcmp(var.value, "Hybrid Bottom")))
+      hybrid_options = false;
+
+   if (hybrid_options != hybrid_options_prev)
+   {
+      option_display.visible = hybrid_options;
+
+      option_display.key = "melonds_hybrid_small_screen";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+#ifdef HAVE_OPENGL
+      option_display.key = "melonds_hybrid_ratio";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+#endif
+
+      updated = true;
+   }
+
+#ifdef JIT_ENABLED
+   // Show/hide JIT core options
+   bool jit_options_prev = jit_options;
+
+   jit_options = true;
+   var.key = "melonds_jit_enable";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "disabled"))
+      jit_options = false;
+
+   if (jit_options != jit_options_prev)
+   {
+      option_display.visible = jit_options;
+
+      option_display.key = "melonds_jit_block_size";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      option_display.key = "melonds_jit_branch_optimisations";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      option_display.key = "melonds_jit_literal_optimisations";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      option_display.key = "melonds_jit_fast_memory";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+      updated = true;
+   }
+#endif
+
+   return updated;
+}
+
 void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
    environ_cb = cb;
+
+   libretro_set_core_options(environ_cb, &libretro_supports_option_categories);
+
+   struct retro_core_options_update_display_callback update_display_cb;
+   update_display_cb.callback = update_option_visibility;
+   environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update_display_cb);
 
    static const struct retro_system_content_info_override content_overrides[] = {
       {
@@ -127,91 +235,6 @@ void retro_set_environment(retro_environment_t cb)
    };
 
    environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE, (void*)content_overrides);
-
-   std::string screen_gap = "Screen gap; ";
-
-   static const int MAX_SCREEN_GAP = 192; // arbitrarily choose screen Y res
-
-   for (int i = 0; i <= MAX_SCREEN_GAP; i++)
-   {
-       screen_gap.append(std::to_string(i));
-
-       if (i != MAX_SCREEN_GAP)
-           screen_gap.append("|");
-   }
-
-#ifdef HAVE_OPENGL
-   std::string opengl_resolution = "OpenGL Internal Resolution; ";
-
-   static const int MAX_SCALE = 8;
-
-   char temp[100];
-   for(int i = 1; i <= MAX_SCALE; i++)
-   {
-      temp[0] = 0;
-      snprintf(temp, sizeof(temp), "%ix native (%ix%i)", i, VIDEO_WIDTH * i, VIDEO_HEIGHT * i);
-      std::string param = temp;
-
-      opengl_resolution.append(param);
-
-      if(i != MAX_SCALE)
-         opengl_resolution.append("|");
-   }
-#endif
-
-#ifdef JIT_ENABLED
-   std::string jit_blocksize = "JIT block size; ";
-
-   static const int MAX_JIT_BLOCKSIZE = 100;
-   static const int DEFAULT_BLOCK_SIZE = 32;
-
-   jit_blocksize.append(std::to_string(DEFAULT_BLOCK_SIZE) + "|");
-
-   for(int i = 1; i <= MAX_JIT_BLOCKSIZE; i++)
-   {
-      if(i == DEFAULT_BLOCK_SIZE) continue;
-
-      jit_blocksize.append(std::to_string(i));
-
-      if(i != MAX_JIT_BLOCKSIZE)
-         jit_blocksize.append("|");
-   }
-#endif
-
-  static const retro_variable values[] =
-   {
-      { "melonds_console_mode", "Console Mode; DS|DSi" },
-      { "melonds_boot_directly", "Boot game directly; enabled|disabled" },
-      { "melonds_screen_layout", "Screen Layout; Top/Bottom|Bottom/Top|Left/Right|Right/Left|Top Only|Bottom Only|Hybrid Top|Hybrid Bottom" },
-      { "melonds_screen_gap", screen_gap.c_str() },
-      { "melonds_hybrid_small_screen", "Hybrid small screen mode; Bottom|Top|Duplicate" },
-      { "melonds_swapscreen_mode", "Swap Screen mode; Toggle|Hold" },
-      { "melonds_randomize_mac_address", "Randomize MAC address; disabled|enabled" },
-#ifdef HAVE_THREADS
-      { "melonds_threaded_renderer", "Threaded software renderer; disabled|enabled" },
-#endif
-      { "melonds_touch_mode", "Touch mode; disabled|Mouse|Touch|Joystick" },
-#ifdef HAVE_OPENGL
-      { "melonds_hybrid_ratio", "Hybrid ratio (OpenGL only); 2|3" },
-      { "melonds_opengl_renderer", "OpenGL Renderer (Restart); disabled|enabled" },
-      { "melonds_opengl_resolution", opengl_resolution.c_str() },
-      { "melonds_opengl_better_polygons", "OpenGL Improved polygon splitting; disabled|enabled" },
-      { "melonds_opengl_filtering", "OpenGL filtering; nearest|linear" },
-#endif
-#ifdef JIT_ENABLED
-      { "melonds_jit_enable", "JIT Enable (Restart); enabled|disabled" },
-      { "melonds_jit_block_size", jit_blocksize.c_str() },
-      { "melonds_jit_branch_optimisations", "JIT Branch optimisations; enabled|disabled" },
-      { "melonds_jit_literal_optimisations", "JIT Literal optimisations; enabled|disabled" },
-      { "melonds_jit_fast_memory", "JIT Fast memory; enabled|disabled" },
-#endif
-      { "melonds_dsi_sdcard", "Enable DSi SD card; disabled|enabled" },
-      { "melonds_audio_bitrate", "Audio bitrate; Automatic|10-bit|16-bit" },
-      { "melonds_audio_interpolation", "Audio Interpolation; None|Linear|Cosine|Cubic" },
-      { 0, 0 }
-   };
-
-   environ_cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)values);
 
    if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging))
       log_cb = logging.log;
@@ -229,6 +252,9 @@ void retro_set_environment(retro_environment_t cb)
    };
 
    cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
+      libretro_supports_bitmasks = true;
 
    static const struct retro_subsystem_memory_info gba_memory[] = {
       { "srm", 0x101 },
@@ -549,9 +575,37 @@ static void check_variables(bool init)
          Config::AudioInterp = 0;
    }
 
+   var.key = "melonds_use_fw_settings";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (!strcmp(var.value, "disabled"))
+         Config::FirmwareOverrideSettings = true;
+      else if (!strcmp(var.value, "enabled"))
+         Config::FirmwareOverrideSettings = false;
+   }
+
+   var.key = "melonds_language";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (!strcmp(var.value, "Japanese"))
+         Config::FirmwareLanguage = 0;
+      else if (!strcmp(var.value, "English"))
+         Config::FirmwareLanguage = 1;
+      else if (!strcmp(var.value, "French"))
+         Config::FirmwareLanguage = 2;
+      else if (!strcmp(var.value, "German"))
+         Config::FirmwareLanguage = 3;
+      else if (!strcmp(var.value, "Italian"))
+         Config::FirmwareLanguage = 4;
+      else if (!strcmp(var.value, "Spanish"))
+         Config::FirmwareLanguage = 5;
+   }
+
    input_state.current_touch_mode = new_touch_mode;
 
    update_screenlayout(layout, &screen_layout_data, enable_opengl, swapped_screens);
+
+   update_option_visibility();
 }
 
 static void audio_callback(void)
@@ -746,7 +800,12 @@ static bool _handle_load_game(unsigned type, const struct retro_game_info *info)
    strcpy(Config::DSiFirmwarePath, "dsi_firmware.bin");
    strcpy(Config::DSiNANDPath, "dsi_nand.bin");
    strcpy(Config::DSiSDPath, "dsi_sd_card.bin");
-   strcpy(Config::FirmwareUsername, "MelonDS");
+
+   const char *retro_username;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_USERNAME, &retro_username) && retro_username)
+      strcpy(Config::FirmwareUsername, retro_username);
+   else
+      strcpy(Config::FirmwareUsername, "melonDS");
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "Left" },
@@ -777,38 +836,6 @@ static bool _handle_load_game(unsigned type, const struct retro_game_info *info)
    {
       log_cb(RETRO_LOG_INFO, "XRGB8888 is not supported.\n");
       return false;
-   }
-
-   unsigned language = RETRO_LANGUAGE_ENGLISH;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_LANGUAGE, &language))
-   {
-      Config::FirmwareOverrideSettings = true;
-      
-      switch(language)
-      {
-      case RETRO_LANGUAGE_JAPANESE:
-         Config::FirmwareLanguage = 0;
-         break;
-
-      case RETRO_LANGUAGE_FRENCH:
-         Config::FirmwareLanguage = 2;
-         break;
-
-      case RETRO_LANGUAGE_GERMAN:
-         Config::FirmwareLanguage = 3;
-         break;
-
-      case RETRO_LANGUAGE_ITALIAN:
-         Config::FirmwareLanguage = 4;
-         break;
-
-      case RETRO_LANGUAGE_SPANISH:
-         Config::FirmwareLanguage = 5;
-         break;
-
-      default:
-         Config::FirmwareLanguage = 1; // English
-      }
    }
 
    check_variables(true);
