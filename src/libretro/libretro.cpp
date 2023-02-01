@@ -17,6 +17,7 @@
 #include "SPU.h"
 #include "version.h"
 #include "frontend/FrontendUtil.h"
+#include "frontend/mic_blow.h"
 
 #include "input.h"
 #include "opengl.h"
@@ -60,6 +61,9 @@ static bool hybrid_options = true;
 #ifdef JIT_ENABLED
 static bool jit_options = true;
 #endif
+
+static void Mic_FeedNoise();
+static u8 micNoiseType;
 
 enum CurrentRenderer
 {
@@ -159,7 +163,7 @@ static bool update_option_visibility(void)
    }
 #endif
 
-   // Show/gide Hybrid screen options
+   // Show/hide Hybrid screen options
    bool hybrid_options_prev = hybrid_options;
 
    hybrid_options = true;
@@ -551,6 +555,15 @@ static void check_variables(bool init)
          Config::DSiSDEnable = 0;
    }
 
+   var.key = "melonds_mic_input";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (!strcmp(var.value, "Blow Noise"))
+         micNoiseType = 1;
+      else
+         micNoiseType = 0;
+   }
+
    var.key = "melonds_audio_bitrate";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
@@ -580,7 +593,7 @@ static void check_variables(bool init)
    {
       if (!strcmp(var.value, "disabled"))
          Config::FirmwareOverrideSettings = true;
-      else if (!strcmp(var.value, "enabled"))
+      else
          Config::FirmwareOverrideSettings = false;
    }
 
@@ -722,9 +735,14 @@ void retro_run(void)
 
    if (input_state.holding_noise_btn)
    {
-      s16 tmp[735];
-      for (int i = 0; i < 735; i++) tmp[i] = rand() & 0xFFFF;
-      NDS::MicInputFrame(tmp, 735);
+      if (micNoiseType)
+         Mic_FeedNoise();
+      else
+      {
+         s16 tmp[735];
+         for (int i = 0; i < 735; i++) tmp[i] = rand() & 0xFFFF;
+         NDS::MicInputFrame(tmp, 735);
+      }
    }
    else
    {
@@ -749,6 +767,23 @@ void retro_run(void)
    }
 
    NDSCart_SRAMManager::Flush();
+}
+
+void Mic_FeedNoise()
+{
+    int sample_len = sizeof(mic_blow) / sizeof(u16);
+    static int sample_pos = 0;
+
+    s16 tmp[735];
+
+    for (int i = 0; i < 735; i++)
+    {
+        tmp[i] = mic_blow[sample_pos];
+        sample_pos++;
+        if (sample_pos >= sample_len) sample_pos = 0;
+    }
+
+    NDS::MicInputFrame(tmp, 735);
 }
 
 static bool _handle_load_game(unsigned type, const struct retro_game_info *info)
@@ -986,7 +1021,21 @@ void retro_cheat_reset(void)
 
 void retro_cheat_set(unsigned index, bool enabled, const char *code)
 {
-   (void)index;
-   (void)enabled;
-   (void)code;
+   if (!enabled)
+      return;
+   ARCode curcode;
+   std::string str(code);
+   char * pch =  &*str.begin();
+   memcpy(curcode.Name, code, 128);
+   curcode.Enabled=enabled;
+   curcode.CodeLen=0;
+   pch = strtok(pch, " +");
+   while (pch != NULL)
+   {
+    curcode.Code[curcode.CodeLen]=(u32)strtol(pch, NULL, 16);
+    log_cb(RETRO_LOG_INFO, "Adding Code %s (%d) \n",pch, curcode.Code[curcode.CodeLen]);
+    curcode.CodeLen++;
+    pch = strtok(NULL, " +");
+   }
+   AREngine::RunCheat(curcode);
 }
