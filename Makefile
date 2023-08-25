@@ -7,6 +7,8 @@ HAVE_OPENGLES3 := 0
 HAVE_THREADS   := 0
 HAVE_WIFI      := 1
 
+EMULATORJS_THREADS ?= 0
+
 SPACE :=
 SPACE := $(SPACE) $(SPACE)
 BACKSLASH :=
@@ -173,9 +175,15 @@ else ifeq ($(platform), emscripten)
    TARGET := $(TARGET_NAME)_libretro_emscripten.bc
    HAVE_OPENGL = 0
    HAVE_OPENGLES3 = 0
-   HAVE_THREADS = 0
    HAVE_WIFI = 0
    STATIC_LINKING = 1
+   ifeq ($(EMULATORJS_THREADS), 1)
+      HAVE_THREADS = 1
+      LIBS += -pthread
+   else
+      HAVE_THREADS = 0
+   endif
+   
 
    CFLAGS += -msimd128 -ftree-vectorize
    CXXFLAGS += -msimd128 -ftree-vectorize
