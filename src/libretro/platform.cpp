@@ -37,7 +37,9 @@
 #define SO_REUSEADDR 0
 #define SO_BROADCAST 0
 #define socket(domain, type, protocol) NULL
+#ifndef __EMSCRIPTEN__
 #define bind(sockfd, addr, addrlen) -1
+#endif
 #define setsockopt(sockfd, level, optname, optval, optlen) -1
 #define sendto(sockfd, buf, len, flags, dest_addr, addrlen) 0
 #define recvfrom(sockfd, buf, len, flags, src_addr, addrlen) 0
